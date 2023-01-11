@@ -75,7 +75,7 @@ cyclesdata = pd.read_csv(CPUCYCLESCSV,sep=';')
 cyclesdata.columns = ['TimestampC','U']
 
 # Convert the column from String to Datetime type
-wattmeterdata.Timestamp=pd.to_datetime(wattmeterdata.Timestamp, unit='s')
+wattmeterdata.Timestamp=pd.to_datetime(wattmeterdata.Timestamp)
 
 #Synch_time is used to sychronize both files due to the small difference found between the clock of the single-board computer and the wattmeter
 synch_time=CLOCKSYNC
