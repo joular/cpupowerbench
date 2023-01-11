@@ -3,3 +3,4 @@ pandas
 plotly
 matplotlib
 datetime
+scikit-learn
