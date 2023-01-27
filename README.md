@@ -1,4 +1,4 @@
-# CPU Power Benchmark (CPUPowerBench)
+# <a href="https://www.noureddine.org/research/joular/"><img src="https://raw.githubusercontent.com/joular/.github/main/profile/joular.png" alt="Joular Project" width="64" /></a> CPU Power Benchmark (CPUPowerBench)
 
 CPUPowerBench is an automated benchmark to accurately generate a power model for single-board computers (Raspberry Pi, Asus TinkerBoard, BeagleBone, etc.).
 
