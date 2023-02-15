@@ -55,9 +55,15 @@ print('---------------------------------')
 
 # Read CSV files and rewrite them with proper headers
 
+## If using PowerSpy2 data file
 temp_df = pd.read_csv(POWERSPYCSV,sep='\t',encoding = 'latin-1')
 temp_df.columns = ['Timestamp','U RMS','I RMS','P RMS','U Max','I Max','Frequency']
 temp_df.to_csv(POWERSPYCSV,sep='\t', index = False, header=True)
+
+## If using a regular CSV with two columns: Timestamp and Power consumption
+# temp_df = pd.read_csv(POWERSPYCSV,sep=',',encoding = 'latin-1')
+# temp_df.columns = ['Timestamp','Power']
+# temp_df.to_csv(POWERSPYCSV,sep=',', index = False, header=True)
 
 temp_df = pd.read_csv(CPUCYCLESCSV,sep=';')
 temp_df.columns = ['TimestampC','U']#,'P_unused']
@@ -68,14 +74,23 @@ temp_df.columns = ['start_time','end_time','U']
 temp_df.to_csv(CPULOADCSV,sep=',', index = False, header=True)
 
 # Read the CSV of the wattmeter and the cycles
+## If using PowerSpy2 data file
 wattmeterdata = pd.read_csv(POWERSPYCSV,sep='\t',encoding = 'latin-1')
 wattmeterdata.columns = ['Timestamp','U RMS','I RMS','P RMS','U Max','I Max','Frequency']
+
+## If using a regular CSV with two columns: Timestamp and Power consumption
+# wattmeterdata = pd.read_csv(POWERSPYCSV,sep=',',encoding = 'latin-1')
+#wattmeterdata.columns = ['Timestamp','Power']
 
 cyclesdata = pd.read_csv(CPUCYCLESCSV,sep=';')
 cyclesdata.columns = ['TimestampC','U']
 
 # Convert the column from String to Datetime type
+## If using PowerSpy2 data file
 wattmeterdata.Timestamp=pd.to_datetime(wattmeterdata.Timestamp)
+## If using a regular CSV with two columns: Timestamp and Power consumption
+## Timestamp is usually in seconds
+# wattmeterdata.Timestamp=pd.to_datetime(wattmeterdata.Timestamp, unit='s')
 
 #Synch_time is used to sychronize both files due to the small difference found between the clock of the single-board computer and the wattmeter
 synch_time=CLOCKSYNC
@@ -107,7 +122,9 @@ cyclesdata.drop_duplicates()
 result = pd.concat([wattmeterdata, cyclesdata], axis=1, sort=False, join='inner')
 
 # Drop useless columns and rename columns
+## If using PowerSpy2 data file
 result=result.drop(['U RMS', 'I RMS' , 'U Max', 'I Max','Frequency'], axis=1)
+
 result.rename(columns={"TimestampC": "Timestamp"}, inplace=True)
 
 # Read the CSV of the times data
@@ -133,7 +150,10 @@ for i in range(0, timedata.shape[0]):
 cleandata=resultdata
 
 # Display the clean data
+## If using PowerSpy2 data file
 resultdata.rename(columns={"P RMS": "P"}, inplace=True)
+## If using a regular CSV with two columns: Timestamp and Power consumption
+resultdata.rename(columns={"Power": "P"}, inplace=True)
 
 # Write the results
 resultdata.to_csv (r""+COMPLETEDATACSV, index = False, header=True)
