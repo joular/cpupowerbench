@@ -46,11 +46,26 @@ Then, just run the model generation script: ```python runModelGeneration.py``` i
 
 Note: if you use a different powermeter that outputs a different CSV file structure, you need to modify the model generation file to process the CSV file accordingly.
 
-## :bookmark_tabs: Citation
+## :bookmark_tabs: Cite this work
 
-If you use our tool in a research paper, we would love if you could cite our paper describing the benchmark:
+To cite our work in a research paper, please cite our paper in the 18th International Conference on Intelligent Environments (IE2022).
 
 - **Automated Power Modeling of Computing Devices: Implementation and Use Case for Raspberry Pis**. Houssam Kanso, Adel Noureddine, and Ernesto Exposito. In Sustainable Computing: Informatics and Systems journal (SUSCOM). Volume 37. January 2023.
+
+```
+@article{KANSO2023100837,
+	title = {Automated power modeling of computing devices: Implementation and use case for Raspberry Pis},
+	journal = {Sustainable Computing: Informatics and Systems},
+	volume = {37},
+	pages = {100837},
+	year = {2023},
+	issn = {2210-5379},
+	doi = {https://doi.org/10.1016/j.suscom.2022.100837},
+	url = {https://www.sciencedirect.com/science/article/pii/S2210537922001688},
+	author = {Houssam Kanso and Adel Noureddine and Ernesto Exposito},
+	keywords = {Power consumption, Performance, Measurement, Empirical experimentation, Automated software architecture}
+}
+```
 
 ## :newspaper: License
 
