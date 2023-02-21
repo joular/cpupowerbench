@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the research paper."
+preferred-citation:
+  type: article
+  authors:
+  - family-names: "Kanso"
+    given-names: "Houssam"
+    orcid: "https://orcid.org/0000-0002-4811-191X"
+  - family-names: "Noureddine"
+    given-names: "Adel"
+    orcid: "https://orcid.org/0000-0002-8585-574X"
+  - family-names: "Exposito"
+    given-names: "Ernesto"
+    orcid: "https://orcid.org/0000-0002-3543-2909"
+  title: "Automated power modeling of computing devices: Implementation and use case for Raspberry Pis"
+  year: 2023
+  journal: Sustainable Computing: Informatics and Systems
+  volume: 37
+  doi: 10.1016/j.suscom.2022.100837
