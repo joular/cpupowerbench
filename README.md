@@ -48,7 +48,7 @@ Note: if you use a different powermeter that outputs a different CSV file struct
 
 ## :bookmark_tabs: Cite this work
 
-To cite our work in a research paper, please cite our paper in the 18th International Conference on Intelligent Environments (IE2022).
+To cite our work in a research paper, please cite our paper in Sustainable Computing: Informatics and Systems journal.
 
 - **Automated Power Modeling of Computing Devices: Implementation and Use Case for Raspberry Pis**. Houssam Kanso, Adel Noureddine, and Ernesto Exposito. In Sustainable Computing: Informatics and Systems journal (SUSCOM). Volume 37. January 2023.
 
