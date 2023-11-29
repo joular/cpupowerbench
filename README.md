@@ -44,7 +44,8 @@ Also, download power data CSV file from PowerSpy2, and copy it under the name po
 
 Then, just run the model generation script: ```python runModelGeneration.py``` in model-generation folder.
 
-Note: if you use a different powermeter that outputs a different CSV file structure, you need to modify the model generation file to process the CSV file accordingly.
+If you use a different powermeter or have a different CSV file structure for the power file, you can run the script with the ```powercsv``` option: ```python runModelGeneration.py powercsv```.
+The option expects the CSV file to have two columns: timestamp and power consumption.
 
 ## :bookmark_tabs: Cite this work
 
