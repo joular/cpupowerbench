@@ -1,6 +1,5 @@
-sklearn
-pandas
-plotly
-matplotlib
+scikit-learn == 1.3.*
+pandas == 2.1.*
+matplotlib == 3.8.*
 datetime
-scikit-learn
+numpy == 1.26.*

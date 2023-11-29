@@ -5,20 +5,14 @@
 # which accompanies this distribution, and is available at
 # https://www.gnu.org/licenses/gpl-3.0.en.html
 #
-# Author: Houssam Kanso
-#
-# Contributors: Adel Noureddine
+# Initial author: Houssam Kanso
+# Contributor and maintainer: Adel Noureddine
 
 # Imports for command line arguments
 import sys
-
-# Imports for processing and cleaning csv files
 import pandas as pd
 from datetime import timedelta
-
-# Imports to generate power models
 import math
-import pandas as pd
 import numpy as np
 from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import PolynomialFeatures
@@ -36,7 +30,7 @@ from sklearn.metrics import mean_squared_error
 powerspy_file = True
 
 if len(sys.argv) == 2:
-    if (sys.argv[1] == "powercsv"):
+    if sys.argv[1] == "powercsv":
         print("Using regular power CSV file")
         powerspy_file = False
     else:
@@ -69,7 +63,7 @@ CLOCKSYNC = 0
 # --------------------------------------------
 # --------------------------------------------
 
-## First let's process and clean CSV files
+# First let's process and clean CSV files
 
 print('---------------------------------')
 print('Processing and cleaning CSV files')
@@ -97,7 +91,7 @@ temp_df.columns = ['start_time','end_time','U']
 temp_df.to_csv(CPULOADCSV,sep=',', index = False, header=True)
 
 # Read the CSV of the wattmeter and the cycles
-## If using PowerSpy2 data file
+# If using PowerSpy2 data file
 if powerspy_file:
     wattmeterdata = pd.read_csv(POWERSPYCSV,sep='\t',encoding = 'latin-1')
     wattmeterdata.columns = ['Timestamp','U RMS','I RMS','P RMS','U Max','I Max','Frequency']
@@ -112,13 +106,16 @@ cyclesdata.columns = ['TimestampC','U']
 # Convert the column from String to Datetime type
 if powerspy_file:
     # If using PowerSpy2 data file
-    wattmeterdata.Timestamp=pd.to_datetime(wattmeterdata.Timestamp)
+    wattmeterdata.Timestamp = pd.to_datetime(wattmeterdata.Timestamp)
 else:
     # If using a regular CSV with two columns: Timestamp and Power consumption
     # Timestamp is usually in seconds
-    wattmeterdata.Timestamp=pd.to_datetime(wattmeterdata.Timestamp, unit='s')
+    wattmeterdata.Timestamp = pd.to_datetime(wattmeterdata.Timestamp, unit='s')
+    # If time is shifted by 2 hours, then fix it
+    # wattmeterdata.Timestamp = wattmeterdata.Timestamp + pd.to_timedelta(2, unit='h')
 
-# Synch_time is used to sychronize both files due to the small difference found between the clock of the single-board computer and the wattmeter
+# Synch_time is used to sychronize both files due to the small difference
+# found between the clock of the single-board computer and the wattmeter
 synch_time=CLOCKSYNC
 wattmeterdata.Timestamp=wattmeterdata.Timestamp-timedelta(seconds=synch_time)
 
@@ -128,60 +125,67 @@ datetime_index = pd.DatetimeIndex(datetime_series.values)
 wattmeterdata = wattmeterdata.set_index(datetime_index)
 
 # Drop the column Timestamp not useful anymore
-wattmeterdata.drop('Timestamp',axis=1,inplace=True)
+wattmeterdata.drop('Timestamp', axis=1, inplace=True)
 
+year = 2023
+month = 10
+day = 5
 # Convert the column from String to Datetime type
-cyclesdata.TimestampC=pd.to_datetime(cyclesdata.TimestampC)
+cyclesdata.TimestampC = pd.to_datetime(cyclesdata.TimestampC, format='%H:%M:%S')
+cyclesdata.TimestampC = cyclesdata.TimestampC.apply(lambda x: x.replace(year=year, month=month, day=day))
 
 # Create datetime index passing the datetime series
 datetime_series = pd.to_datetime(cyclesdata['TimestampC'])
 datetime_index = pd.DatetimeIndex(datetime_series.values)
 cyclesdata = cyclesdata.set_index(datetime_index)
 
-# Clean the data by making sure there no duplicates in the index (timedate) that may cause errors while concatenating data
+# Clean the data by making sure there no duplicates in the index (timedate)
+# that may cause errors while concatenating data
 wattmeterdata = wattmeterdata[~wattmeterdata.index.duplicated(keep='first')]
 wattmeterdata.drop_duplicates()
 cyclesdata = cyclesdata[~cyclesdata.index.duplicated(keep='first')]
 cyclesdata.drop_duplicates()
 
 # Concatenate Experimental data and cycle data
-result = pd.concat([wattmeterdata, cyclesdata], axis=1, sort=False, join='inner')
+result = pd.concat([wattmeterdata, cyclesdata], axis="columns", sort=False, join='inner')
 
 # Drop useless columns and rename columns
 if powerspy_file:
     # If using PowerSpy2 data file
-    result=result.drop(['U RMS', 'I RMS' , 'U Max', 'I Max','Frequency'], axis=1)
+    result = result.drop(['U RMS', 'I RMS' , 'U Max', 'I Max','Frequency'], axis=1)
 
 result.rename(columns={"TimestampC": "Timestamp"}, inplace=True)
 
 # Read the CSV of the times data
-timedata = pd.read_csv(CPULOADCSV,sep=',')
-timedata.columns = ['start_time','end_time','U']
+timedata = pd.read_csv(CPULOADCSV, sep=',')
+timedata.columns = ['start_time', 'end_time', 'U']
+
+# Convert the column from String to Datetime type
+timedata.start_time = pd.to_datetime(timedata.start_time, format='%H:%M:%S')
+timedata.end_time = pd.to_datetime(timedata.end_time, format='%H:%M:%S')
+timedata.start_time = timedata.start_time.apply(lambda x: x.replace(year=year, month=month, day=day))
+timedata.end_time = timedata.end_time.apply(lambda x: x.replace(year=year, month=month, day=day))
 
 # Remove the data collected before and after the experiment
 powerdata = result
 powerdata = powerdata.loc[(powerdata['Timestamp'] >= timedata.iloc[0,0])]
 powerdata = powerdata.loc[(powerdata['Timestamp'] <= timedata.iloc[-1,1])]
 
-# Convert the column from String to Datetime type
-timedata.start_time=pd.to_datetime(timedata.start_time)
-timedata.end_time=pd.to_datetime(timedata.end_time)
-
 # Remove the waiting time between each stress level
-resultdata=pd.DataFrame()
+resultdata = pd.DataFrame()
 for i in range(0, timedata.shape[0]):
     newpower = powerdata.loc[(powerdata['Timestamp'] > timedata.iloc[i,0]+timedelta(seconds=3))]
     newpower = newpower.loc[(powerdata['Timestamp'] < timedata.iloc[i,1]-timedelta(seconds=3))]
-    newpower['Real_U']=timedata.iloc[i,2]
-    resultdata=resultdata.append(newpower, ignore_index=True)
-cleandata=resultdata
+    newpower['Real_U'] = timedata.iloc[i,2]
+    resultdata = pd.concat([resultdata, newpower], ignore_index=True)
+cleandata = resultdata
 
 # Display the clean data
-## If using PowerSpy2 data file
+# If using PowerSpy2 data file
 if powerspy_file:
     resultdata.rename(columns={"P RMS": "P"}, inplace=True)
 else:
-    ## If using a regular CSV with two columns: Timestamp and Power consumption
+    # If using a regular CSV with two columns: Timestamp and Power consumption
     resultdata.rename(columns={"Power": "P"}, inplace=True)
 
 # Write the results
@@ -235,7 +239,7 @@ csvdata['error'] = abs (csvdata['estimated_power'] - csvdata['P']) * 100 / csvda
 
 # Print the average error
 print("RMSE = ", math.sqrt(mean_squared_error(Y, linear_regressor.coef_[0][0] * csvdata['U'] + linear_regressor.intercept_[0])))
-average_error = csvdata.mean().error
+average_error = csvdata['error'].mean()
 print('Linear Regression Average Error:', average_error)
 
 #
@@ -296,7 +300,7 @@ np.set_printoptions(suppress=True)
 
 print('Polynomial coefficients:', pol_reg.coef_[0])
 print('Intercept:', pol_reg.intercept_[0])
-print('Polynomial Regression Average Error:', csvdata.mean().error_PR)
+print('Polynomial Regression Average Error:', csvdata['error_PR'].mean())
 
 print('Generating power models finished')
 
