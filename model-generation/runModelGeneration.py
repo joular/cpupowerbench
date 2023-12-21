@@ -59,6 +59,11 @@ COMPLETEDATACSV = './completeData.csv'
 # Interval in seconds for delays between clocks of PowerSpy2 and Single-Board computers
 CLOCKSYNC = 0
 
+# Change with the date of the experiment
+year = 2023
+month = 12
+day = 21
+
 # --------------------------------------------
 # --------------------------------------------
 # --------------------------------------------
@@ -127,9 +132,6 @@ wattmeterdata = wattmeterdata.set_index(datetime_index)
 # Drop the column Timestamp not useful anymore
 wattmeterdata.drop('Timestamp', axis=1, inplace=True)
 
-year = 2023
-month = 10
-day = 5
 # Convert the column from String to Datetime type
 cyclesdata.TimestampC = pd.to_datetime(cyclesdata.TimestampC, format='%H:%M:%S')
 cyclesdata.TimestampC = cyclesdata.TimestampC.apply(lambda x: x.replace(year=year, month=month, day=day))
