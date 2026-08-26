@@ -24,8 +24,8 @@ python3 -m venv .venv
 
 Then compile CPU Cycles program:
 ```
-cmake -S cpucycles -B cpucycles/build -DCMAKE_BUILD_TYPE=Release
-cmake --build cpucycles/build
+cmake .
+make
 ```
 
 The compiled program is written to ```cpucycles/cpucycles```.
@@ -71,8 +71,10 @@ Also, download power data CSV file from PowerSpy2, and copy it under the name po
 
 Then, just run the model generation script: ```python runModelGeneration.py``` in model-generation folder.
 
-If you use a different powermeter or have a different CSV file structure for the power file, you can run the script with the ```powercsv``` option: ```python runModelGeneration.py powercsv```.
-The option expects the CSV file to have two columns: timestamp and power consumption.
+The script works out by itself how the power file is written: whether its columns are separated by a tab, a semicolon or a comma, whether it starts with a header row, and whether it is a PowerSpy2 file (7 columns) or a regular CSV with two columns, timestamp and power consumption.
+A timestamp given as a number of seconds since the epoch is read as UTC and moved to the local time of the machine, which is the clock cpucycles.csv is written with.
+
+The older ```python runModelGeneration.py powercsv``` command still works, the option is simply no longer needed.
 
 The script prints a linear and a polynomial power model, and writes two files:
 
@@ -81,8 +83,11 @@ The script prints a linear and a polynomial power model, and writes two files:
 
 The three input files are only read, never modified, so the script can be run again on the same data.
 
-The date of the experiment is set with the ```year```, ```month``` and ```day``` variables at the top of the script, as the benchmark only records the time of day.
+The benchmark only records the time of day, so the date of the experiment is taken from the power file, the only one of the three carrying a full date.
+Set the ```year```, ```month``` and ```day``` variables at the top of the script to override it, for a power file that holds a time of day only.
+
 If the clock of the power meter is offset from the clock of the board, set ```CLOCKSYNC``` to the difference in seconds.
+The script prints the range covered by each file and the offset between them when they do not overlap at all.
 
 ## :bookmark_tabs: Cite this work
 

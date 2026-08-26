@@ -1,3 +1,4 @@
+# Copyright (c) 2020-2026, Adel Noureddine.
 # Copyright (c) 2020-2023, Université de Pays et des Pays de l'Adour.
 # All rights reserved. This program and the accompanying materials
 # are made available under the terms of the
@@ -9,8 +10,10 @@
 # Contributor and maintainer: Adel Noureddine
 
 # Imports for command line arguments
+import itertools
 import os
 import sys
+import time
 from datetime import timedelta
 
 import matplotlib
@@ -23,25 +26,6 @@ from sklearn.linear_model import LinearRegression
 from sklearn.metrics import root_mean_squared_error
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import PolynomialFeatures
-
-# --------------------------------------------
-# --------------------------------------------
-# --------------------------------------------
-
-# Command line arguments
-
-# Variable for power file type
-# Options: True for powerspy, False for powercsv
-powerspy_file = True
-
-if len(sys.argv) == 2:
-    if sys.argv[1] == "powercsv":
-        print("Using regular power CSV file")
-        powerspy_file = False
-    else:
-        print("Using PowerSpy2 power file")
-else:
-    print("Using PowerSpy2 power file")
 
 # --------------------------------------------
 # --------------------------------------------
@@ -72,10 +56,24 @@ CLOCKSYNC = 0
 # so the first and last seconds of a step are not yet at the requested load
 TRIM_SECONDS = 5
 
-# Change with the date of the experiment
-year = 2023
-month = 12
-day = 21
+# Date of the experiment, only needed if it cannot be read from the power file
+# cpucycles.csv holds a time of day but no date, so the date comes from the power file,
+# which is the only one of the three carrying a full date. Set the three variables below
+# to override it, for instance for a power file that also holds a time of day only
+year = None
+month = None
+day = None
+
+# --------------------------------------------
+# --------------------------------------------
+# --------------------------------------------
+
+# Command line arguments
+
+# The layout of the power file is recognised from the file itself, the option is
+# still accepted so that older commands keep working
+if len(sys.argv) == 2 and sys.argv[1] == "powercsv":
+    print("Option powercsv given, the power file layout is detected automatically anyway")
 
 # --------------------------------------------
 # --------------------------------------------
@@ -84,22 +82,45 @@ day = 21
 # Utility functions
 
 
-def read_benchmark_csv(path, sep, names, encoding=None):
-    """Read a benchmark CSV and always give it the column names we expect.
+def detect_delimiter(path, encoding=None):
+    """Find the character separating the columns of a CSV file.
 
-    The files written by the benchmark (cpucycles.csv, cpuload.csv) carry no header
-    row, while an exported power meter file may carry one. Reading a headerless file
-    with the default header=0 silently swallows its first data row, so detect which
-    kind of file this is instead of assuming.
+    The three files do not agree on one: the benchmark writes cpucycles.csv with
+    semicolons and cpuload.csv with commas, and an exported power file uses whichever
+    character its software was set to, so read it from the file rather than assume one.
+    """
+    with open(path, 'r', encoding=encoding or 'utf-8', errors='replace') as f:
+        lines = [line for line in itertools.islice(f, 5) if line.strip()]
+
+    if not lines:
+        sys.exit(f'Input file is empty: {path}')
+
+    # A separator splits every row in the same number of columns, so it appears the
+    # same number of times in each of them, and at least once
+    # Tried in this order, so that a decimal comma is not mistaken for a separator
+    for candidate in ('\t', ';', ','):
+        counts = {line.count(candidate) for line in lines}
+        if len(counts) == 1 and counts.pop() > 0:
+            return candidate
+
+    sys.exit(f'Cannot tell which character separates the columns of {path}. '
+             f'A tab, a semicolon or a comma is expected.')
+
+
+def read_csv_file(path, encoding=None):
+    """Read a CSV file, working out both its separator and whether it has a header row.
+
+    The files written by the benchmark (cpucycles.csv, cpuload.csv) carry no header row,
+    while an exported power file usually does. Reading a headerless file with the default
+    header=0 silently swallows its first data row, so detect which kind this is.
     """
     if not os.path.isfile(path):
         sys.exit(f'Missing input file: {path}')
 
+    sep = detect_delimiter(path, encoding)
+
     with open(path, 'r', encoding=encoding or 'utf-8', errors='replace') as f:
         first_line = f.readline()
-
-    if not first_line.strip():
-        sys.exit(f'Input file is empty: {path}')
 
     # A data row ends with a number (a power reading, a CPU load), a header row ends with a label
     try:
@@ -108,14 +129,33 @@ def read_benchmark_csv(path, sep, names, encoding=None):
     except (ValueError, IndexError):
         header = 0
 
-    data = pd.read_csv(path, sep=sep, encoding=encoding, header=header)
+    return pd.read_csv(path, sep=sep, encoding=encoding, header=header)
+
+
+def read_benchmark_csv(path, names, encoding=None):
+    """Read one of the CSV files written by the benchmark, and name its columns."""
+    data = read_csv_file(path, encoding)
     if len(data.columns) != len(names):
         sys.exit(f'{path} has {len(data.columns)} columns, expected {len(names)}: {names}')
     data.columns = names
     return data
 
 
-def to_experiment_datetime(times):
+def to_datetimes(timestamps):
+    """Turn the timestamp column of a power file into datetimes in the clock of the board.
+
+    A timestamp is either a date and time already, or a number of seconds since the epoch.
+    Seconds since the epoch count from UTC, while the board writes its own local time in
+    cpucycles.csv, so shift them by the offset this machine's timezone had that day.
+    """
+    if not pd.api.types.is_numeric_dtype(timestamps):
+        return pd.to_datetime(timestamps)
+
+    utc_offset = time.localtime(int(timestamps.iloc[0])).tm_gmtoff
+    return pd.to_datetime(timestamps, unit='s') + pd.to_timedelta(utc_offset, unit='s')
+
+
+def to_experiment_datetime(times, date):
     """Turn a HH:MM:SS column into full datetimes on the date of the experiment.
 
     The benchmark only records the time of day, so the date is added here. A run that
@@ -126,8 +166,25 @@ def to_experiment_datetime(times):
     # Each backwards step in the time of day is one midnight crossed
     extra_days = (parsed.diff() < timedelta(0)).cumsum()
     return parsed.apply(
-        lambda x: x.replace(year=year, month=month, day=day)
+        lambda x: x.replace(year=date.year, month=date.month, day=date.day)
     ) + pd.to_timedelta(extra_days, unit='D')
+
+
+def choose_experiment_date(times, date, power_start, power_end):
+    """Pick the date to put on the times of day, the one overlapping the power file most.
+
+    The date comes from the first power reading, but a run started just before midnight
+    has its first cpucycles line on the day before, or after it on the day after, so try
+    the neighbouring days too and keep whichever lines up with the power readings.
+    """
+    best_date, best_overlap = date, None
+    for shift in (0, -1, 1):
+        candidate = date + timedelta(days=shift)
+        stamps = to_experiment_datetime(times, candidate)
+        overlap = (min(stamps.max(), power_end) - max(stamps.min(), power_start)).total_seconds()
+        if best_overlap is None or overlap > best_overlap:
+            best_date, best_overlap = candidate, overlap
+    return best_date
 
 
 # --------------------------------------------
@@ -142,34 +199,44 @@ print('---------------------------------')
 
 # Read the CSV of the wattmeter and the cycles
 # The input files are only read, never rewritten, so a run can safely be repeated
-if powerspy_file:
-    # If using PowerSpy2 data file
-    wattmeterdata = read_benchmark_csv(
-        POWERSPYCSV, '\t',
-        ['Timestamp', 'U RMS', 'I RMS', 'P RMS', 'U Max', 'I Max', 'Frequency'],
-        encoding='latin-1')
-else:
-    # If using a regular CSV with two columns: Timestamp and Power consumption
-    wattmeterdata = read_benchmark_csv(
-        POWERSPYCSV, ',', ['Timestamp', 'Power'], encoding='latin-1')
+wattmeterdata = read_csv_file(POWERSPYCSV, encoding='latin-1')
 
-cyclesdata = read_benchmark_csv(CPUCYCLESCSV, ';', ['TimestampC', 'U'])
-
-# Convert the column from String to Datetime type
-if powerspy_file:
-    # If using PowerSpy2 data file
-    wattmeterdata.Timestamp = pd.to_datetime(wattmeterdata.Timestamp)
+# Recognise the layout of the power file from the number of columns it holds
+if len(wattmeterdata.columns) == 7:
+    # A PowerSpy2 file: timestamp, then voltage, current, power, and frequency readings
+    print('Power file: PowerSpy2, 7 columns')
+    powerspy_file = True
+    wattmeterdata.columns = ['Timestamp', 'U RMS', 'I RMS', 'P RMS', 'U Max', 'I Max', 'Frequency']
+elif len(wattmeterdata.columns) == 2:
+    # A regular CSV with two columns: Timestamp and Power consumption
+    print('Power file: two columns, timestamp and power')
+    powerspy_file = False
+    wattmeterdata.columns = ['Timestamp', 'Power']
 else:
-    # If using a regular CSV with two columns: Timestamp and Power consumption
-    # Timestamp is usually in seconds
-    wattmeterdata.Timestamp = pd.to_datetime(wattmeterdata.Timestamp, unit='s')
-    # If time is shifted by 2 hours, then fix it
-    # wattmeterdata.Timestamp = wattmeterdata.Timestamp + pd.to_timedelta(2, unit='h')
+    sys.exit(f'{POWERSPYCSV} has {len(wattmeterdata.columns)} columns. Either 7 columns '
+             f'(a PowerSpy2 file) or 2 columns (timestamp and power) are expected.')
+
+cyclesdata = read_benchmark_csv(CPUCYCLESCSV, ['TimestampC', 'U'])
+
+# Convert the column from String or seconds to Datetime type
+wattmeterdata.Timestamp = to_datetimes(wattmeterdata.Timestamp)
 
 # Synch_time is used to sychronize both files due to the small difference
 # found between the clock of the single-board computer and the wattmeter
 synch_time = CLOCKSYNC
 wattmeterdata.Timestamp = wattmeterdata.Timestamp - timedelta(seconds=synch_time)
+
+# The power file is the only one holding a date, so the date of the experiment comes
+# from it, unless it was set by hand at the top of this script
+if year and month and day:
+    experiment_date = pd.Timestamp(year=year, month=month, day=day).date()
+else:
+    experiment_date = wattmeterdata.Timestamp.iloc[0].date()
+
+power_start, power_end = wattmeterdata.Timestamp.min(), wattmeterdata.Timestamp.max()
+experiment_date = choose_experiment_date(
+    cyclesdata.TimestampC, experiment_date, power_start, power_end)
+print(f'Date of the experiment: {experiment_date}')
 
 # Create datetime index passing the datetime series
 datetime_index = pd.DatetimeIndex(wattmeterdata['Timestamp'].values)
@@ -179,7 +246,7 @@ wattmeterdata = wattmeterdata.set_index(datetime_index)
 wattmeterdata.drop('Timestamp', axis=1, inplace=True)
 
 # Convert the column from String to Datetime type
-cyclesdata.TimestampC = to_experiment_datetime(cyclesdata.TimestampC)
+cyclesdata.TimestampC = to_experiment_datetime(cyclesdata.TimestampC, experiment_date)
 
 # Create datetime index passing the datetime series
 datetime_index = pd.DatetimeIndex(cyclesdata['TimestampC'].values)
@@ -194,9 +261,13 @@ cyclesdata = cyclesdata[~cyclesdata.index.duplicated(keep='first')]
 result = pd.concat([wattmeterdata, cyclesdata], axis="columns", sort=False, join='inner')
 
 if result.empty:
-    sys.exit('No timestamp is shared by the power file and cpucycles.csv. '
-             'Check that both cover the same run, and adjust CLOCKSYNC if the '
-             'power meter clock is offset from the board clock.')
+    # Report the gap between the two files, it is the value CLOCKSYNC has to be set to
+    gap = (wattmeterdata.index.min() - cyclesdata.index.min()).total_seconds()
+    sys.exit(f'No timestamp is shared by the power file and {CPUCYCLESCSV}.\n'
+             f'  power readings : {wattmeterdata.index.min()} to {wattmeterdata.index.max()}\n'
+             f'  CPU cycles     : {cyclesdata.index.min()} to {cyclesdata.index.max()}\n'
+             f'The two clocks are {gap:.0f} seconds apart, set CLOCKSYNC = {gap:.0f} '
+             f'at the top of this script if both files do cover the same run.')
 
 # Drop useless columns and rename columns
 if powerspy_file:
@@ -206,11 +277,11 @@ if powerspy_file:
 result.rename(columns={"TimestampC": "Timestamp"}, inplace=True)
 
 # Read the CSV of the times data
-timedata = read_benchmark_csv(CPULOADCSV, ',', ['start_time', 'end_time', 'U'])
+timedata = read_benchmark_csv(CPULOADCSV, ['start_time', 'end_time', 'U'])
 
 # Convert the column from String to Datetime type
-timedata.start_time = to_experiment_datetime(timedata.start_time)
-timedata.end_time = to_experiment_datetime(timedata.end_time)
+timedata.start_time = to_experiment_datetime(timedata.start_time, experiment_date)
+timedata.end_time = to_experiment_datetime(timedata.end_time, experiment_date)
 
 # Remove the data collected before and after the experiment
 powerdata = result
