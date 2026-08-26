@@ -10,17 +10,25 @@ CPUPowerBench is an automated benchmark to accurately generate a power model for
 
 Run the installer file: ```sh installer.sh``` in cpu-benchmark folder.
 
+It installs the build tools, creates a python virtual environment in ```cpu-benchmark/.venv``` for the CPU load generator, and compiles the CPU cycles program.
+
 ### :floppy_disk: Manual Installation
 
-First install dev tools: gcc, cmake, make, python 3, pip: ```sudo apt install python3 python3-pip gcc make cmake```
+First install dev tools: gcc, cmake, make, python 3, pip and venv: ```sudo apt install python3 python3-pip python3-venv gcc make cmake```
 
-Then install python requirements for CPU Load Generator: ```pip install -r requirements.txt```
+Then install python requirements for CPU Load Generator, in a virtual environment:
+```
+python3 -m venv .venv
+./.venv/bin/pip install -r cpuload/requirements.txt
+```
 
 Then compile CPU Cycles program:
 ```
-cmake .
-make
+cmake -S cpucycles -B cpucycles/build -DCMAKE_BUILD_TYPE=Release
+cmake --build cpucycles/build
 ```
+
+The compiled program is written to ```cpucycles/cpucycles```.
 
 ### :bulb: Usage
 
@@ -28,14 +36,33 @@ Connect your single-board device to a PowerSpy2 power meter.
 
 Then, just run the benchmark script: ```sh start-benchmark.sh```.
 
+The script benchmarks 20 CPU loads, from 5% to 100%, for 60 seconds each, and takes about 25 minutes.
+The duration of a load step, the warm up and cool down times, and the list of loads can all be changed at the top of the script.
+
 At the end of the experiment, two CSV files will be generated (cpucycles.csv and cpuload.csv).
+Results of a previous run found in the folder are renamed with a timestamp rather than appended to, so two runs are never mixed in the same file.
 Finally, get the power meter data by using PowerSpy software and downloading the saved monitored data from the meter's internal memory, and rename the file to powerspy.csv.
+
+### :wrench: Generating a CPU load on its own
+
+The CPU load generator used by the benchmark can also be run by itself, for instance to hold a load while measuring something else:
+
+```
+./.venv/bin/python cpuload/cpu_load_generator.py -l 0.5 -d 60
+```
+
+- ```-l``` target load per core, between 0 and 1 (default 0.2). One value applies to every core, or one value per core.
+- ```-d``` duration in seconds. Negative or omitted runs until the process is interrupted (default -1).
+- ```-c``` core(s) to load, defaults to every available core. The benchmark relies on this default to load the whole CPU.
+- ```-p``` save a plot of the resulting load as a PNG, only with a fixed duration and a single core.
 
 ## Step 2: Power model generation
 
 ### :package: Installation
 
 Install python requirements: ```pip install -r requirements.txt``` in model-generation folder.
+
+Python 3.12 or later is required. This step is usually run on a desktop computer rather than on the board itself.
 
 ### :bulb: Usage
 
@@ -46,6 +73,16 @@ Then, just run the model generation script: ```python runModelGeneration.py``` i
 
 If you use a different powermeter or have a different CSV file structure for the power file, you can run the script with the ```powercsv``` option: ```python runModelGeneration.py powercsv```.
 The option expects the CSV file to have two columns: timestamp and power consumption.
+
+The script prints a linear and a polynomial power model, and writes two files:
+
+- ```completeData.csv```, the power and CPU utilization samples kept for the model, with the power each model estimates for them.
+- ```powerModel.png```, a plot of the measured samples against both models.
+
+The three input files are only read, never modified, so the script can be run again on the same data.
+
+The date of the experiment is set with the ```year```, ```month``` and ```day``` variables at the top of the script, as the benchmark only records the time of day.
+If the clock of the power meter is offset from the clock of the board, set ```CLOCKSYNC``` to the difference in seconds.
 
 ## :bookmark_tabs: Cite this work
 

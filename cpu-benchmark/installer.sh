@@ -11,11 +11,29 @@
 #
 # Contributors: Adel Noureddine
 
-sudo apt install python3 python3-pip gcc make cmake
-cd cpuload
-pip install -r requirements.txt
-cd ..
-cd cpucycles
-cmake .
-make
-cd ..
+set -e
+
+# Run from the folder holding this script, so the relative paths below hold
+# whichever folder the script is called from
+cd "$(dirname "$0")"
+
+echo "Installing the build tools and python"
+sudo apt update
+sudo apt install -y python3 python3-pip python3-venv gcc make cmake
+
+# Debian 12 and the Raspberry Pi OS releases based on it refuse to let pip install
+# in the system python (PEP 668), so the dependencies of the CPU load generator go
+# in a virtual environment next to this script, which start-benchmark.sh picks up
+echo "Creating the python virtual environment in .venv"
+python3 -m venv .venv
+./.venv/bin/pip install --upgrade pip
+./.venv/bin/pip install -r cpuload/requirements.txt
+
+echo "Compiling the CPU cycles program"
+# A previous version of this installer built in the source folder, and cmake refuses to
+# build elsewhere while the files of that build are still around
+rm -rf cpucycles/CMakeCache.txt cpucycles/CMakeFiles cpucycles/cmake_install.cmake cpucycles/Makefile
+cmake -S cpucycles -B cpucycles/build -DCMAKE_BUILD_TYPE=Release
+cmake --build cpucycles/build
+
+echo "Installation finished"

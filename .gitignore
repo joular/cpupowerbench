@@ -1,0 +1,29 @@
+# macOS
+.DS_Store
+
+# Editors
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# CMake build of the CPU cycles program
+cpu-benchmark/cpucycles/build/
+cpu-benchmark/cpucycles/cpucycles
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# Benchmark results and generated models
+cpucycles.csv
+cpuload.csv
+powerspy.csv
+completeData.csv
+powerModel.png
+*.csv.[0-9]*
+*.png
