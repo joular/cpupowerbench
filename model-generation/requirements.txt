@@ -1,5 +1,5 @@
-scikit-learn == 1.3.*
-pandas == 2.1.*
-matplotlib == 3.8.*
-datetime
-numpy == 1.26.*
+# Python 3.12 or later is required by these versions
+scikit-learn == 1.9.*
+pandas == 3.0.*
+matplotlib == 3.11.*
+numpy == 2.5.*
