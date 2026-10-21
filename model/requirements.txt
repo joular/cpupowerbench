@@ -1,5 +1,5 @@
 # Python 3.12 or later is required by these versions
-scikit-learn == 1.9.*
-pandas == 3.0.*
-matplotlib == 3.11.*
 numpy == 2.5.*
+pandas == 3.0.*
+scipy == 1.18.*
+matplotlib == 3.11.*

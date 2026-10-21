@@ -1,93 +1,103 @@
-# <a href="https://www.noureddine.org/research/joular/"><img src="https://raw.githubusercontent.com/joular/.github/main/profile/joular.png" alt="Joular Project" width="64" /></a> CPU Power Benchmark (CPUPowerBench)
+# <a href="https://www.noureddine.org/research/joular/"><img src="https://raw.githubusercontent.com/joular/.github/main/profile/joular.png" alt="Joular Project" width="64" /></a> CPU Power Benchmark
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue)](https://www.gnu.org/licenses/gpl-3.0)
 
-CPUPowerBench is an automated benchmark to accurately generate a power model for single-board computers (Raspberry Pi, Asus TinkerBoard, BeagleBone, etc.).
+CPUPowerBench generates the power model of a single-board computer (Raspberry Pi, Asus Tinker Board, etc.) or of any Linux machine: its power consumption as a function of its CPU utilization.
+The CPU of board is stressed step by step while a power meter records its power consumption, then a polynomial model is fitted to the two.
+The model can be used by [PowerJoular](https://github.com/joular/powerjoular).
 
-## Step 1: CPU Benchmark
+## Step 1: run the benchmark on the board
 
-### :package: Automatic installation
+The benchmark needs Linux and a C compiler. Raspberry Pi OS already has gcc, otherwise install it with `sudo apt install gcc`.
 
-Run the installer file: ```sh installer.sh``` in cpu-benchmark folder.
+```
+sh benchmark/start-benchmark.sh
+```
 
-It installs the build tools, creates a python virtual environment in ```cpu-benchmark/.venv``` for the CPU load generator, and compiles the CPU cycles program.
+It is compiled on its first run.
+The board stays idle for 30 seconds, then runs 20 CPU loads from 5% to 100% of every CPU for 30 seconds each, with 5 idle seconds after each one (takes around 12 minutes in total).
+Results are saved to `benchmark-<host>-<date>.csv` in the current folder, so a previous run is never overwritten.
 
-### :floppy_disk: Manual Installation
+Each CPU gets its own thread, pinned to it, which works for the requested share of every short period and sleeps for the rest.
+Periods last 10 ms on average, so a load of 20% keeps every CPU 20% busy all along rather than in bursts at full speed.
+Their length varies at random between 5 and 15 ms, otherwise the work would always meet the kernel's accounting tick at the same point and the CPU usage measured would be off by a few points.
+Each step prints the CPU usage measured, with the lowest and highest CPU, to check every CPU carries the load.
 
-First install dev tools: gcc, cmake, make, python 3, pip and venv: ```sudo apt install python3 python3-pip python3-venv gcc make cmake```
+Check the whole setup in under two minutes first, with fewer and shorter steps:
 
-Then install python requirements for CPU Load Generator, in a virtual environment:
+```
+sh benchmark/start-benchmark.sh -w 20 -d 10 -s 25
+```
+
+| Option | Default | |
+|---|---|---|
+| `-w SECONDS` | 30 | idle time before the first load |
+| `-d SECONDS` | 30 | time at each load |
+| `-c SECONDS` | 5 | idle time after each load |
+| `-s PERCENT` | 5 | loads go from this percentage to 100% in steps of it |
+| `-l LOADS` | | loads to run instead, between 0 and 1, comma separated |
+| `-o FILE` | | output file |
+
+To hold a single load, for instance 50% for a minute: `sh benchmark/start-benchmark.sh -l 0.5 -w 0 -c 0 -d 60`.
+
+For an accurate model:
+
+- Stop other programs. The benchmark warns when the board is busy while it should be idle.
+- Keep the clock synchronized (NTP). The benchmark warns when it is not.
+- Cool the board. Temperature and frequency are recorded, and throttling is reported in step 3.
+
+## Step 2: record the power
+
+Start recording power consumption before the benchmark and stop after it, with one reading per second. Either:
+
+- Record in the internal memory of a PowerSpy2 meter, then export the data with the PowerSpy software.
+- Or run [PowerSpyCli](https://github.com/joular/powerspycli) on another computer: `python powerspycli.py -m 00:11:22:33:44:55 -f power.csv`. Never run it on the measured board, as it would add its own load.
+
+Any other meter works if it exports a time and a power in watts on each row, separated by a semicolon, a comma or a tab.
+The time can be a UNIX time, seconds since the epoch (or milliseconds or microseconds), or a date and time, with or without a UTC offset, day or month first.
+Decimal commas are fine, readings faster than once a second are averaged over each second, and rows without a time or a power are skipped.
+A file with two columns is read as time then power, otherwise give the columns with `--time-column` and `--power-column`.
+
+## Step 3: generate the model
+
+On any computer with Python 3.12 or later, with the libraries in a virtual environment (recent Debian, Raspberry Pi OS and Homebrew refuse to install them system-wide):
+
 ```
 python3 -m venv .venv
-./.venv/bin/pip install -r cpuload/requirements.txt
+.venv/bin/pip install -r model/requirements.txt
+.venv/bin/python model/generate_model.py power.csv benchmark-raspberrypi-20261020-140312.csv
 ```
 
-Then compile CPU Cycles program:
-```
-cmake .
-make
-```
+The script lines up the clocks of the meter and the board by itself, and drops the first and last 2 seconds of each load.
+The power at rest comes from the warmup, without its first 10 seconds: the ondemand governor of Raspberry Pi OS keeps the full frequency for 5 seconds after a busy moment, which also rules out the short idle steps between loads.
+Only polynomials that never decrease between 0% and 100% are fitted, and the degree is the lowest that predicts each load.
 
-The compiled program is written to ```cpucycles/cpucycles```.
+| Option | |
+|---|---|
+| `--offset SECONDS` | seconds the meter's clock is ahead of the board's, instead of finding it |
+| `--trim SECONDS` | seconds dropped at both ends of each load (default 2) |
+| `--max-degree N` | highest degree tried (default 9) |
+| `--time-column N` | column of the power file holding the time (default 1) |
+| `--power-column N` | column of the power file holding the power (default 2, or 4 for a PowerSpy2 export) |
 
-### :bulb: Usage
+It prints a linear and a polynomial model, the coefficients ready for PowerJoular, and writes next to the benchmark file:
 
-Connect your single-board device to a PowerSpy2 power meter.
+- `<name>-data.csv`, the samples kept, with the power each model estimates for them.
+- `<name>-model.json`, both models and their errors.
+- `<name>-model.png`, the measured samples against both models, and the power and CPU utilization over time.
 
-Then, just run the benchmark script: ```sh start-benchmark.sh```.
+## Benchmark file
 
-The script benchmarks 20 CPU loads, from 5% to 100%, for 60 seconds each, and takes about 25 minutes.
-The duration of a load step, the warm up and cool down times, and the list of loads can all be changed at the top of the script.
+A first line describes the board (`# model, cores, governor, kernel`), then one row per second, separated by semicolons:
 
-At the end of the experiment, two CSV files will be generated (cpucycles.csv and cpuload.csv).
-Results of a previous run found in the folder are renamed with a timestamp rather than appended to, so two runs are never mixed in the same file.
-Finally, get the power meter data by using PowerSpy software and downloading the saved monitored data from the meter's internal memory, and rename the file to powerspy.csv.
-
-### :wrench: Generating a CPU load on its own
-
-The CPU load generator used by the benchmark can also be run by itself, for instance to hold a load while measuring something else:
-
-```
-./.venv/bin/python cpuload/cpu_load_generator.py -l 0.5 -d 60
-```
-
-- ```-l``` target load per core, between 0 and 1 (default 0.2). One value applies to every core, or one value per core.
-- ```-d``` duration in seconds. Negative or omitted runs until the process is interrupted (default -1).
-- ```-c``` core(s) to load, defaults to every available core. The benchmark relies on this default to load the whole CPU.
-- ```-p``` save a plot of the resulting load as a PNG, only with a fixed duration and a single core.
-
-## Step 2: Power model generation
-
-### :package: Installation
-
-Install python requirements: ```pip install -r requirements.txt``` in model-generation folder.
-
-Python 3.12 or later is required. This step is usually run on a desktop computer rather than on the board itself.
-
-### :bulb: Usage
-
-Copy the 2 CSV files generated in the benchmark (cpucycles.csv and cpuload.csv) to the model-generation folder.
-Also, download power data CSV file from PowerSpy2, and copy it under the name powerspy.csv.
-
-Then, just run the model generation script: ```python runModelGeneration.py``` in model-generation folder.
-
-The script works out by itself how the power file is written: whether its columns are separated by a tab, a semicolon or a comma, whether it starts with a header row, and whether it is a PowerSpy2 file (7 columns) or a regular CSV with two columns, timestamp and power consumption.
-A timestamp given as a number of seconds since the epoch is read as UTC and moved to the local time of the machine, which is the clock cpucycles.csv is written with.
-
-The older ```python runModelGeneration.py powercsv``` command still works, the option is simply no longer needed.
-
-The script prints a linear and a polynomial power model, and writes two files:
-
-- ```completeData.csv```, the power and CPU utilization samples kept for the model, with the power each model estimates for them.
-- ```powerModel.png```, a plot of the measured samples against both models.
-
-The three input files are only read, never modified, so the script can be run again on the same data.
-
-The benchmark only records the time of day, so the date of the experiment is taken from the power file, the only one of the three carrying a full date.
-Set the ```year```, ```month``` and ```day``` variables at the top of the script to override it, for a power file that holds a time of day only.
-
-If the clock of the power meter is offset from the clock of the board, set ```CLOCKSYNC``` to the difference in seconds.
-The script prints the range covered by each file and the offset between them when they do not overlap at all.
+| Column | |
+|---|---|
+| `time` | end of the second, in seconds since the epoch |
+| `usage` | CPU utilization measured over that second, from 0 to 1 |
+| `load` | load the benchmark was running, 0 when idle |
+| `step` | number of the step, starting at 0 |
+| `temperature` | in °C, empty if the board does not report it |
+| `frequency` | of the first CPU, in MHz, empty if the board does not report it |
 
 ## :bookmark_tabs: Cite this work
 
@@ -95,26 +105,11 @@ To cite our work in a research paper, please cite our paper in Sustainable Compu
 
 - **Automated Power Modeling of Computing Devices: Implementation and Use Case for Raspberry Pis**. Houssam Kanso, Adel Noureddine, and Ernesto Exposito. In Sustainable Computing: Informatics and Systems journal (SUSCOM). Volume 37. January 2023.
 
-```
-@article{KANSO2023100837,
-	title = {Automated power modeling of computing devices: Implementation and use case for Raspberry Pis},
-	journal = {Sustainable Computing: Informatics and Systems},
-	volume = {37},
-	pages = {100837},
-	year = {2023},
-	issn = {2210-5379},
-	doi = {https://doi.org/10.1016/j.suscom.2022.100837},
-	url = {https://www.sciencedirect.com/science/article/pii/S2210537922001688},
-	author = {Houssam Kanso and Adel Noureddine and Ernesto Exposito},
-	keywords = {Power consumption, Performance, Measurement, Empirical experimentation, Automated software architecture}
-}
-```
-
 ## :newspaper: License
 
-RPiPowerBench is licensed under the GNU GPL 3 license only (GPL-3.0-only).
+CPU Power Benchmark is licensed under the GNU GPL 3 license only (GPL-3.0-only).
 
-Copyright (c) 2020-2023, Université de Pau et des Pays de l'Adour.
+Copyright (c) 2026, Adel Noureddine.
 All rights reserved. This program and the accompanying materials are made available under the terms of the GNU General Public License v3.0 only (GPL-3.0-only) which accompanies this distribution, and is available at: https://www.gnu.org/licenses/gpl-3.0.en.html
 
-Authors : Houssam Kanso, Adel Noureddine
+Author: Adel Noureddine
