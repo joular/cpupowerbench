@@ -1,5 +1,14 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite the research paper."
+title: "CPU Power Benchmark"
+authors:
+- family-names: "Noureddine"
+  given-names: "Adel"
+  orcid: "https://orcid.org/0000-0002-8585-574X"
+version: 2.0.0
+date-released: 2026-10-24
+license: GPL-3.0-only
+repository-code: "https://github.com/joular/cpupowerbench"
 preferred-citation:
   type: article
   authors:

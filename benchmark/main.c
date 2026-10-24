@@ -12,6 +12,7 @@
 #define _GNU_SOURCE
 
 #include <errno.h>
+#include <glob.h>
 #include <math.h>
 #include <pthread.h>
 #include <signal.h>
@@ -31,6 +32,8 @@
 
 #define TEMPERATURE_FILE "/sys/class/thermal/thermal_zone0/temp"
 #define FREQUENCY_FILE "/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq"
+// Raspberry Pi firmware flags for under-voltage, frequency capping and throttling, now and since boot
+#define THROTTLED_FILE "/sys/devices/platform/soc*/soc*:firmware/get_throttled"
 
 struct step {
     double load;
@@ -60,7 +63,7 @@ static void print_usage(FILE *stream) {
             "  -d SECONDS  time at each load (default 30)\n"
             "  -c SECONDS  idle time after each load (default 5)\n"
             "  -s PERCENT  loads go from this percentage to 100%% in steps of it (default 5)\n"
-            "  -l LOADS    loads to run instead, between 0 and 1, comma separated (e.g. 0.5,1)\n"
+            "  -l LOADS    loads to run instead of -s, from 0.001 to 1, comma separated (e.g. 0.5,1)\n"
             "  -o FILE     output file (default benchmark-<host>-<date>.csv)\n");
 }
 
@@ -82,8 +85,9 @@ static int parse_loads(const char *text, double *loads) {
             fail("-l takes at most 100 loads");
         }
         loads[count] = strtod(text, &end);
-        if (end == text || (*end != ',' && *end != '\0') || loads[count] < 0.0 || loads[count] > 1.0) {
-            fail("-l takes loads between 0 and 1, separated by commas");
+        // Below 0.001 the load would round to nothing
+        if (end == text || (*end != ',' && *end != '\0') || loads[count] < 0.001 || loads[count] > 1.0) {
+            fail("-l takes loads from 0.001 to 1, separated by commas");
         }
         count++;
         text = end + 1;
@@ -136,7 +140,7 @@ static long long wall_clock_second(void) {
 }
 
 int main(int argc, char *argv[]) {
-    int warmup = 30, duration = 30, cooldown = 5, increment = 5;
+    int warmup = 30, duration = 30, cooldown = 5, increment = 0;
     double loads[MAX_LOADS];
     int load_count = 0;
     const char *output = NULL;
@@ -159,7 +163,11 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
 
+    if (load_count > 0 && increment > 0) {
+        fail("-l and -s cannot be given together");
+    }
     if (load_count == 0) {
+        increment = increment > 0 ? increment : 5;
         for (int percent = increment; percent < 100; percent += increment) {
             loads[load_count++] = percent / 100.0;
         }
@@ -228,6 +236,8 @@ int main(int argc, char *argv[]) {
     int cores = load_start();
     pthread_sigmask(SIG_SETMASK, &previous, NULL);
     if (cores == 0) {
+        fclose(csv);
+        unlink(output);
         fail("cannot start the load threads");
     }
 
@@ -246,11 +256,24 @@ int main(int argc, char *argv[]) {
         strcpy(governor, "unknown");
     }
 
-    fprintf(csv, "# %s, %d cores, governor %s, kernel %s\n", model, cores, governor, kernel.release);
+    // The flags come in hexadecimal, as the firmware writes them
+    char throttled[32] = "";
+    glob_t found;
+    if (glob(THROTTLED_FILE, 0, NULL, &found) == 0) {
+        read_text(found.gl_pathv[0], throttled, sizeof(throttled));
+        globfree(&found);
+    }
+
+    // The bits are those of the userland, which has its own models on some boards
+    char info[512];
+    snprintf(info, sizeof(info), "%s, %d cores, governor %s, kernel %s, %d bits%s%s", model, cores, governor,
+             kernel.release, (int) (sizeof(void *) * 8), throttled[0] != '\0' ? ", throttled " : "", throttled);
+
+    fprintf(csv, "# %s\n", info);
     fprintf(csv, "time;usage;load;step;temperature;frequency\n");
     fflush(csv);
 
-    printf("Board: %s, %d cores, governor %s, kernel %s\n", model, cores, governor, kernel.release);
+    printf("Board: %s\n", info);
 
     // Usage is measured over the whole board, so it could not reach 100%
     long online = sysconf(_SC_NPROCESSORS_ONLN);

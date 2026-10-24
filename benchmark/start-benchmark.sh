@@ -16,13 +16,16 @@ set -e
 
 DIR=$(cd "$(dirname "$0")" && pwd)
 
-if [ ! -x "$DIR/cpupowerbench" ] || [ -n "$(cd "$DIR" && find main.c usage.c usage.h load.c load.h -newer cpupowerbench)" ]; then
-	if ! command -v cc >/dev/null 2>&1; then
-		echo "A C compiler is needed, install it with: sudo apt install gcc" >&2
-		exit 1
-	fi
-	echo "Compiling cpupowerbench"
-	(cd "$DIR" && cc -O2 -Wall -Wextra -pthread -o cpupowerbench main.c usage.c load.c)
+if ! command -v cc >/dev/null 2>&1 || ! command -v make >/dev/null 2>&1; then
+	echo "A C compiler and make are needed, install them with: sudo apt install gcc make" >&2
+	exit 1
+fi
+(cd "$DIR" && make)
+
+if [ "$1" != "-h" ]; then
+	# Lets the board cool down after compiling, and leaves time to start the power meter
+	echo "Starting in 60 s, start recording the power now"
+	sleep 60
 fi
 
 exec "$DIR/cpupowerbench" "$@"

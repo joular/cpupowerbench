@@ -1,0 +1,29 @@
+name: Build
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build the benchmark
+        run: make -C benchmark CFLAGS="-O2 -Wall -Wextra -Werror"
+
+      - name: Run it for a few seconds
+        run: ./benchmark/cpupowerbench -w 2 -d 2 -c 1 -l 0.5,1 -o smoke.csv && cat smoke.csv
+
+      - name: Check the model script
+        run: python3 -m py_compile model/generate_model.py
+
+      # A sample pair of files, samples/power.csv and samples/benchmark.csv, is fitted when the repository holds one
+      - name: Fit the sample model
+        run: |
+          if [ -f samples/power.csv ] && [ -f samples/benchmark.csv ]; then
+            python3 -m venv .venv
+            .venv/bin/pip install -r model/requirements.txt
+            .venv/bin/python model/generate_model.py samples/power.csv samples/benchmark.csv
+          else
+            echo "No sample in samples/, skipped"
+          fi

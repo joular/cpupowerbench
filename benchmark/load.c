@@ -13,7 +13,6 @@
 
 #include <pthread.h>
 #include <sched.h>
-#include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <time.h>
@@ -27,11 +26,11 @@ Periods of 10 ms on average look like a steady load to the frequency governor, r
 #define MIN_PERIOD_NS 5000000L
 #define PERIOD_SPREAD_NS 10000000U
 
-// How often an idle thread checks for a new load, rarely enough to let the CPU rest
-#define IDLE_NS 100000000L
-
-static atomic_int load_permille;
-static atomic_int running;
+// The load and the stop flag are read under the lock, idle threads wait on the condition until either changes
+static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t changed = PTHREAD_COND_INITIALIZER;
+static int load_permille;
+static int running;
 static pthread_t *threads;
 static int thread_count;
 
@@ -58,15 +57,22 @@ static unsigned int next_random(unsigned int *state) {
 static void *load_thread(void *seed) {
     unsigned int state = (unsigned int) (uintptr_t) seed;
     struct timespec period_end, busy_until, now;
+    int permille;
 
     clock_gettime(CLOCK_MONOTONIC, &period_end);
-    while (atomic_load(&running)) {
-        int permille = atomic_load(&load_permille);
-        if (permille == 0) {
-            add_ns(&period_end, IDLE_NS);
-            clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &period_end, NULL);
-            continue;
+    for (;;) {
+        pthread_mutex_lock(&lock);
+        while (running && load_permille == 0) {
+            // Idle costs nothing until a load is set, then the periods start afresh
+            pthread_cond_wait(&changed, &lock);
+            clock_gettime(CLOCK_MONOTONIC, &period_end);
         }
+        if (!running) {
+            pthread_mutex_unlock(&lock);
+            break;
+        }
+        permille = load_permille;
+        pthread_mutex_unlock(&lock);
 
         long period = MIN_PERIOD_NS + (long) (next_random(&state) % PERIOD_SPREAD_NS);
 
@@ -96,7 +102,7 @@ int load_start(void) {
         return 0;
     }
 
-    atomic_store(&running, 1);
+    running = 1;
     for (int cpu = 0; cpu < CPU_SETSIZE && thread_count < count; cpu++) {
         if (!CPU_ISSET(cpu, &allowed)) {
             continue;
@@ -120,11 +126,17 @@ int load_start(void) {
 }
 
 void load_set(double load) {
-    atomic_store(&load_permille, (int) (load * 1000.0 + 0.5));
+    pthread_mutex_lock(&lock);
+    load_permille = (int) (load * 1000.0 + 0.5);
+    pthread_cond_broadcast(&changed);
+    pthread_mutex_unlock(&lock);
 }
 
 void load_stop(void) {
-    atomic_store(&running, 0);
+    pthread_mutex_lock(&lock);
+    running = 0;
+    pthread_cond_broadcast(&changed);
+    pthread_mutex_unlock(&lock);
     for (int i = 0; i < thread_count; i++) {
         pthread_join(threads[i], NULL);
     }

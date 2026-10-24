@@ -1,5 +1,5 @@
-# Python 3.12 or later is required by these versions
-numpy == 2.5.*
-pandas == 3.0.*
-scipy == 1.18.*
-matplotlib == 3.11.*
+# Python 3.12 or later, any newer version of these works
+numpy >= 1.26
+pandas >= 2.2
+scipy >= 1.11
+matplotlib >= 3.8
