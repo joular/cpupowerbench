@@ -160,12 +160,12 @@ def fit(usage, power, degree):
     return np.polynomial.Polynomial(np.r_[model.coef, np.zeros(degree + 1 - len(model.coef))])
 
 
-def cv_rmse(usage, power, steps, degree):
-    """RMSE of every step predicted by a fit on all the other steps, the first and last steps left aside."""
+def cv_rmse(usage, power, steps, loads, degree):
+    """RMSE of every step predicted by a fit on all the other steps, those of the lowest and highest loads left aside."""
     # Seconds of one step are alike, so a degree is judged on whole steps it has not seen.
-    # The outermost steps would have to be extrapolated, which no model is meant to do
+    # The outermost loads would have to be extrapolated, which no model is meant to do; -l may list them in any order
     errors = []
-    for step in np.unique(steps)[1:-1]:
+    for step in pd.Series(loads).groupby(steps).first().sort_values(kind="stable").index[1:-1]:
         out = steps == step
         model = fit(usage[~out], power[~out], degree)
         errors.append(model(usage[out]) - power[out])
@@ -283,7 +283,7 @@ def main():
     cv = {}
     print("Degree  CV RMSE (W)")
     for degree in range(1, max_degree + 1):
-        cv[degree] = cv_rmse(u, p, steps, degree)
+        cv[degree] = cv_rmse(u, p, steps, data.load.to_numpy(), degree)
         print(f"{degree:6d}  {cv[degree]:11.4f}")
     # The simplest model within 2% of the best one
     degree = min(d for d in cv if cv[d] <= 1.02 * min(cv.values()))
