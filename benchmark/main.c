@@ -31,7 +31,8 @@
 #define MAX_CPUS 1024
 
 #define TEMPERATURE_FILE "/sys/class/thermal/thermal_zone0/temp"
-#define FREQUENCY_FILE "/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq"
+// One per group of CPUs sharing a clock. The first CPU is a little one on big.LITTLE boards
+#define FREQUENCY_FILES "/sys/devices/system/cpu/cpufreq/policy*/scaling_cur_freq"
 // Raspberry Pi firmware flags for under-voltage, frequency capping and throttling, now and since boot
 #define THROTTLED_FILE "/sys/devices/platform/soc*/soc*:firmware/get_throttled"
 
@@ -59,6 +60,7 @@ static void fail(const char *message) {
 static void print_usage(FILE *stream) {
     fprintf(stream,
             "Usage: cpupowerbench [options]\n"
+            "  -p SECONDS  pause first, to start the power meter and let the board cool down (default 60)\n"
             "  -w SECONDS  idle time before the first load (default 30)\n"
             "  -d SECONDS  time at each load (default 30)\n"
             "  -c SECONDS  idle time after each load (default 5)\n"
@@ -85,8 +87,8 @@ static int parse_loads(const char *text, double *loads) {
             fail("-l takes at most 100 loads");
         }
         loads[count] = strtod(text, &end);
-        // Below 0.001 the load would round to nothing
-        if (end == text || (*end != ',' && *end != '\0') || loads[count] < 0.001 || loads[count] > 1.0) {
+        // Below 0.001 the load would round to nothing. Written so that NaN fails too
+        if (end == text || (*end != ',' && *end != '\0') || !(loads[count] >= 0.001 && loads[count] <= 1.0)) {
             fail("-l takes loads from 0.001 to 1, separated by commas");
         }
         count++;
@@ -122,6 +124,22 @@ static double read_number(const char *path, double divisor) {
     return end == text ? NAN : value / divisor;
 }
 
+// Highest frequency of the CPUs, NAN when the board does not report it
+static double read_frequency(void) {
+    double highest = NAN;
+    glob_t found;
+    if (glob(FREQUENCY_FILES, 0, NULL, &found) == 0) {
+        for (size_t i = 0; i < found.gl_pathc; i++) {
+            double frequency = read_number(found.gl_pathv[i], 1000.0);
+            if (isnan(highest) || frequency > highest) {
+                highest = frequency;
+            }
+        }
+        globfree(&found);
+    }
+    return highest;
+}
+
 // Returns 0 once the benchmark is stopped
 static int sleep_until(const struct timespec *time) {
     while (clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, time, NULL) == EINTR) {
@@ -140,14 +158,15 @@ static long long wall_clock_second(void) {
 }
 
 int main(int argc, char *argv[]) {
-    int warmup = 30, duration = 30, cooldown = 5, increment = 0;
+    int pause = 60, warmup = 30, duration = 30, cooldown = 5, increment = 0;
     double loads[MAX_LOADS];
     int load_count = 0;
     const char *output = NULL;
     int option;
 
-    while ((option = getopt(argc, argv, "w:d:c:s:l:o:h")) != -1) {
+    while ((option = getopt(argc, argv, "p:w:d:c:s:l:o:h")) != -1) {
         switch (option) {
+        case 'p': pause = parse_int(optarg, 0, 3600, "-p"); break;
         case 'w': warmup = parse_int(optarg, 0, 3600, "-w"); break;
         case 'd': duration = parse_int(optarg, 1, 3600, "-d"); break;
         case 'c': cooldown = parse_int(optarg, 0, 3600, "-c"); break;
@@ -256,21 +275,21 @@ int main(int argc, char *argv[]) {
         strcpy(governor, "unknown");
     }
 
-    // The flags come in hexadecimal, as the firmware writes them
-    char throttled[32] = "";
+    // Left empty where there is none, which then reads as no flags
+    char throttled_file[256] = "";
     glob_t found;
     if (glob(THROTTLED_FILE, 0, NULL, &found) == 0) {
-        read_text(found.gl_pathv[0], throttled, sizeof(throttled));
+        snprintf(throttled_file, sizeof(throttled_file), "%s", found.gl_pathv[0]);
         globfree(&found);
     }
 
     // The bits are those of the userland, which has its own models on some boards
     char info[512];
-    snprintf(info, sizeof(info), "%s, %d cores, governor %s, kernel %s, %d bits%s%s", model, cores, governor,
-             kernel.release, (int) (sizeof(void *) * 8), throttled[0] != '\0' ? ", throttled " : "", throttled);
+    snprintf(info, sizeof(info), "%s, %d cores, governor %s, kernel %s, %d bits", model, cores, governor,
+             kernel.release, (int) (sizeof(void *) * 8));
 
     fprintf(csv, "# %s\n", info);
-    fprintf(csv, "time;usage;load;step;temperature;frequency\n");
+    fprintf(csv, "time;usage;load;step;temperature;frequency;throttled\n");
     fflush(csv);
 
     printf("Board: %s\n", info);
@@ -294,9 +313,18 @@ int main(int argc, char *argv[]) {
            step_count, left / 60, left % 60);
     fflush(stdout);
 
+    // After the options are checked, so that a mistake shows before the power meter is started
+    struct timespec tick, now;
+    if (pause > 0) {
+        printf("Starting in %d s, start recording the power now\n", pause);
+        fflush(stdout);
+        clock_gettime(CLOCK_MONOTONIC, &tick);
+        tick.tv_sec += pause;
+        sleep_until(&tick);
+    }
+
     // Tick on the whole seconds of the wall clock, the ones the power meter stamps its readings with.
     // The monotonic clock keeps the ticks one second apart even if the wall clock is set meanwhile
-    struct timespec tick, now;
     clock_gettime(CLOCK_REALTIME, &now);
     clock_gettime(CLOCK_MONOTONIC, &tick);
     tick.tv_nsec += 1000000000L - now.tv_nsec;
@@ -311,6 +339,7 @@ int main(int argc, char *argv[]) {
     for (int s = 0; s < step_count && !stop; s++) {
         double usage_sum = 0.0, temperature_sum = 0.0, frequency_sum = 0.0;
         int samples = 0;
+        unsigned long throttled = 0;
         int step_cpu_count = cpu_count;
         memcpy(step_cpus, cpus, sizeof(cpus[0]) * (size_t) cpu_count);
 
@@ -331,7 +360,10 @@ int main(int argc, char *argv[]) {
 
             double usage = cpu_usage(&before, &after);
             double temperature = read_number(TEMPERATURE_FILE, 1000.0);
-            double frequency = read_number(FREQUENCY_FILE, 1000.0);
+            double frequency = read_frequency();
+            // In hexadecimal, as the firmware writes them
+            char flags[32];
+            read_text(throttled_file, flags, sizeof(flags));
             before = after;
 
             fprintf(csv, "%lld;%.4f;%.3f;%d;", wall_clock_second(), usage, steps[s].load, s);
@@ -342,13 +374,15 @@ int main(int argc, char *argv[]) {
             if (!isnan(frequency)) {
                 fprintf(csv, "%.0f", frequency);
             }
-            fputc('\n', csv);
+            fprintf(csv, ";%s\n", flags);
             // Written as it goes, so an interrupted run keeps its data
             fflush(csv);
 
             usage_sum += usage;
             temperature_sum += temperature;
             frequency_sum += frequency;
+            // Bits 0 to 3: under-voltage, frequency capped, throttled and soft temperature limit, at that moment
+            throttled |= strtoul(flags, NULL, 16) & 0xF;
             samples++;
             left--;
         }
@@ -380,6 +414,9 @@ int main(int argc, char *argv[]) {
         }
         if (!isnan(frequency_sum)) {
             printf(", %.0f MHz", frequency_sum / samples);
+        }
+        if (throttled != 0) {
+            printf(", throttled (flags 0x%lx)", throttled);
         }
         printf(", %d:%02d left\n", left / 60, left % 60);
 

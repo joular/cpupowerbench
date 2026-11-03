@@ -10,7 +10,7 @@
 
 """Fit a power model, watts against CPU usage, from a cpupowerbench run and a power meter log.
 
-Usage: generate_model.py POWER.csv BENCHMARK.csv [--offset S] [--no-search] [--tz ZONE] [--trim S]
+Usage: generate_model.py POWER.csv BENCHMARK.csv [--offset S] [--tz ZONE] [--trim S]
                          [--max-degree N] [--time-column N] [--power-column N] [--codename NAME]
 """
 
@@ -28,8 +28,8 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import lsq_linear
 
-# Seconds searched each way around --offset for the lag between the power meter clock and the board clock
-MAX_LAG = 120
+# Seconds the board is taken as idle before and after the run, when lining up the clocks
+IDLE_AROUND = 120
 
 # joularcore takes the coefficients of x^0 to x^9
 TERMS = 10
@@ -70,22 +70,17 @@ def parse_times(text, near, tz):
     return best
 
 
-def stamp(second):
-    """Date and time of a second since 1970, in UTC."""
-    return pd.Timestamp(second, unit="s", tz="UTC")
-
-
 def read_benchmark(path):
-    """Board name, bits of its userland, firmware throttling flags and per-second samples of a cpupowerbench CSV."""
+    """Board name, bits of its userland and per-second samples of a cpupowerbench CSV."""
     with open(path) as f:
         header = f.readline().lstrip("#").strip()
-    # "<board>, <n> cores, governor <g>, kernel <r>, <b> bits, throttled <flags>", where the board name may hold commas
-    tail = re.search(r", \d+ cores, governor \S+, kernel \S+(?:, (\d+) bits)?(?:, throttled (\w+))?$", header)
+    # "<board>, <n> cores, governor <g>, kernel <r>, <b> bits", where the board name may hold commas
+    tail = re.search(r", \d+ cores, governor \S+, kernel \S+, (\d+) bits$", header)
     if tail is None:
         sys.exit(f"{path}: not a cpupowerbench file")
-    bits = int(tail.group(1)) if tail.group(1) else None
-    throttled = int(tail.group(2), 16) if tail.group(2) else 0
-    return header[:tail.start()], bits, throttled, pd.read_csv(path, sep=";", comment="#")
+    # The firmware flags are hexadecimal
+    bench = pd.read_csv(path, sep=";", comment="#", dtype={"throttled": str})
+    return header[:tail.start()], int(tail.group(1)), bench
 
 
 def read_power(path, time_column, power_column, near, tz):
@@ -129,13 +124,15 @@ def correlation(usage, power, lag):
     common = ~np.isnan(shifted) & ~np.isnan(values)
     if common.sum() < 2:
         return np.nan, 0
-    return np.corrcoef(values[common], shifted[common])[0, 1], common.sum()
+    # NaN where one side is constant, as when only the idle taken around the run is in common
+    with np.errstate(invalid="ignore", divide="ignore"):
+        return np.corrcoef(values[common], shifted[common])[0, 1], common.sum()
 
 
-def find_offset(usage, power, centre, need):
-    """Lag within MAX_LAG of centre with the best correlation, among those with at least need seconds in common."""
+def find_offset(usage, power, need):
+    """Lag with the best correlation, among all those with at least need seconds in common."""
     best, best_r = None, -1.0
-    for lag in range(centre - MAX_LAG, centre + MAX_LAG + 1):
+    for lag in range(int(power.index.min() - usage.index.max()), int(power.index.max() - usage.index.min()) + 1):
         r, common = correlation(usage, power, lag)
         if common >= need and r > best_r:
             best, best_r = lag, r
@@ -183,10 +180,9 @@ def main():
         description="Fit a power model, watts against CPU usage, from a cpupowerbench run and a power meter log.")
     parser.add_argument("power", help="power meter log: PowerSpy2 export, or two columns time and power")
     parser.add_argument("benchmark", help="benchmark CSV written by cpupowerbench on the board")
-    parser.add_argument("--offset", type=int, default=0, metavar="S",
-                        help=f"seconds the power meter clock is ahead of the board, searched within {MAX_LAG} s "
-                             "of this value (default 0)")
-    parser.add_argument("--no-search", action="store_true", help="take --offset as it is, without searching")
+    parser.add_argument("--offset", type=int, metavar="S",
+                        help="seconds the power meter clock is ahead of the board, taken as it is instead of "
+                             "searching for the best match")
     parser.add_argument("--tz", default="UTC", metavar="ZONE",
                         help="time zone of the dates of the power log when they carry no UTC offset, "
                              "such as Europe/Paris (default UTC)")
@@ -216,36 +212,33 @@ def main():
         if Path(path).exists():
             sys.exit(f"{path} exists, move it away first")
 
-    board, bits, throttled, bench = read_benchmark(args.benchmark)
+    board, bits, bench = read_benchmark(args.benchmark)
     power = read_power(args.power, args.time_column, args.power_column, bench.time.median(), args.tz)
-    print(f"Board: {board}" + (f", {bits} bits" if bits else ""))
-
-    b0, b1 = bench.time.min(), bench.time.max()
-    p0, p1 = power.index.min() - args.offset, power.index.max() - args.offset
-    if p1 < b0 or p0 > b1:
-        sys.exit(f"The power file does not overlap the benchmark (UTC, --offset {args.offset}):\n"
-                 f"  benchmark {stamp(b0)} to {stamp(b1)}\n"
-                 f"  power     {stamp(p0)} to {stamp(p1)}\n"
-                 f"  gap       {max(b0 - p1, p0 - b1)} s\n"
-                 "A gap of whole hours means the power log is in local time: give its zone with --tz")
+    print(f"Board: {board}, {bits} bits")
 
     # Every load is followed by the same cooldown, so lags a whole step apart match almost as well
     # inside the run. Taking the board as idle around the run sets them apart at its ends.
+    b0, b1 = bench.time.min(), bench.time.max()
     idle = bench.usage[bench.load == 0].median()
-    usage = pd.concat([pd.Series(idle, index=np.arange(b0 - MAX_LAG, b0)),
+    usage = pd.concat([pd.Series(idle, index=np.arange(b0 - IDLE_AROUND, b0)),
                        bench.set_index("time").usage,
-                       pd.Series(idle, index=np.arange(b1 + 1, b1 + MAX_LAG + 1))])
-    if args.no_search:
-        offset = args.offset
-        r, _ = correlation(usage, power, offset)
-        print(f"Clock offset: {offset:+d} s (given), correlation {r:.3f}")
+                       pd.Series(idle, index=np.arange(b1 + 1, b1 + IDLE_AROUND + 1))])
+    need = len(bench) / 2
+    if args.offset is None:
+        offset, r = find_offset(usage, power, need)
     else:
-        offset, r = find_offset(usage, power, args.offset, len(bench) / 2)
-        if offset is None:
-            sys.exit("The power file covers less than half of the benchmark")
-        print(f"Clock offset: {offset:+d} s (power meter ahead of the board), correlation {r:.3f}")
+        offset = args.offset
+        r, common = correlation(usage, power, offset)
+        if common < need:
+            sys.exit(f"With --offset {offset}, the power file covers less than half of the benchmark: "
+                     "leave it out to search")
+    if offset is None:
+        sys.exit("The power file covers less than half of the benchmark")
+    given = args.offset is not None
+    print(f"Clock offset: {offset:+d} s (power meter ahead of the board{', given' if given else ''}), "
+          f"correlation {r:.3f}")
     if r < 0.9:
-        print("Warning: usage and power hardly match, check the files, --tz or --offset")
+        print("Warning: usage and power hardly match, check the files" + (" and --offset" if given else ""))
 
     bench["power"] = power.reindex(bench.time + offset).to_numpy()
 
@@ -262,9 +255,15 @@ def main():
     if not (data.load == 0).any():
         print("Warning: no idle samples, the warmup (-w) is too short: the power at rest is extrapolated")
 
-    if throttled:
-        print(f"Warning: the firmware reports throttling flags 0x{throttled:x} since boot "
-              "(under-voltage, frequency capping or throttling), check the power supply and the cooling")
+    # Raspberry Pi firmware flags. Bits 0 to 3, under-voltage, frequency capped, throttled and soft temperature
+    # limit, hold at that second. Bits 16 to 19 hold the same since boot, so they also catch shorter events
+    flags = bench.throttled.dropna().map(lambda f: int(f, 16))
+    if len(flags):
+        hit = sorted(bench.load[flags[(flags & 0xF) > 0].index].unique())
+        if hit or (flags.iloc[-1] & ~flags.iloc[0]) >> 16:
+            print("Warning: the firmware reported under-voltage, frequency capping or throttling "
+                  + ("at loads " + ", ".join(f"{load:.0%}" for load in hit) if hit else "during the run")
+                  + ", check the power supply and the cooling, then run again")
     hottest = bench.temperature.max()
     if hottest >= 80:
         print(f"Warning: the board reached {hottest:.0f} °C and may have throttled")

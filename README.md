@@ -33,6 +33,7 @@ sh benchmark/start-benchmark.sh -w 20 -d 10 -s 25
 
 | Option | Default | |
 |---|---|---|
+| `-p SECONDS` | 60 | pause first, to start the power meter and let the board cool down |
 | `-w SECONDS` | 30 | idle time before the first load |
 | `-d SECONDS` | 30 | time at each load |
 | `-c SECONDS` | 5 | idle time after each load |
@@ -46,7 +47,7 @@ For an accurate model:
 
 - Stop other programs. The benchmark warns when the board is busy while it should be idle.
 - Keep the clock synchronized (NTP). The benchmark warns when it is not.
-- Cool the board and power it well. Temperature and frequency are recorded, as are the firmware's under-voltage and throttling flags on a Raspberry Pi, and throttling is reported in step 3.
+- Cool the board and power it well. Temperature and frequency are recorded every second, as are the firmware's under-voltage and throttling flags on a Raspberry Pi: throttling shows at each step and is reported in step 3.
 
 ## Step 2: record the power
 
@@ -71,7 +72,7 @@ python3 -m venv .venv
 .venv/bin/python model/generate_model.py power.csv benchmark-raspberrypi-20261020-140312.csv
 ```
 
-The script lines up the clocks of the meter and the board by itself, searching up to 120 seconds each way around `--offset`, and drops the first and last 2 seconds of each load.
+The script lines up the clocks of the meter and the board by itself, trying every offset that leaves at least half of the benchmark covered by the power file, and drops the first and last 2 seconds of each load.
 The power at rest comes from the warmup, without its first 10 seconds: the ondemand governor of Raspberry Pi OS keeps the full frequency for 5 seconds after a busy moment, which also rules out the short idle steps between loads.
 Only polynomials that never decrease between 0% and 100% are fitted: their coefficients in Bernstein form are kept non-decreasing, which guarantees the polynomial never decreases, though a few polynomials that never decrease are out of its reach.
 The degree is chosen by cross-validation: every load step is predicted by a fit on all the other steps, except the first and last steps, which would have to be extrapolated.
@@ -79,8 +80,7 @@ The degree kept is the lowest whose error is within 2% of the best, among degree
 
 | Option | |
 |---|---|
-| `--offset SECONDS` | seconds the meter's clock is ahead of the board's, the middle of the search (default 0) |
-| `--no-search` | take `--offset` as it is |
+| `--offset SECONDS` | seconds the meter's clock is ahead of the board's, taken as it is instead of searching |
 | `--tz ZONE` | time zone of the dates without a UTC offset in the power file, such as `Europe/Paris` (default UTC) |
 | `--trim SECONDS` | seconds dropped at both ends of each load (default 2) |
 | `--max-degree N` | highest degree tried (default 9) |
@@ -107,7 +107,7 @@ Please also share your model in the [Power Models Database](https://github.com/j
 
 ## Benchmark file
 
-A first line describes the board (`# model, cores, governor, kernel, bits` and, on a Raspberry Pi, the firmware's throttling flags since boot in hexadecimal), then one row per second, separated by semicolons:
+A first line describes the board (`# model, cores, governor, kernel, bits`), then one row per second, separated by semicolons:
 
 | Column | |
 |---|---|
@@ -116,7 +116,8 @@ A first line describes the board (`# model, cores, governor, kernel, bits` and, 
 | `load` | load the benchmark was running, 0 when idle |
 | `step` | number of the step, starting at 0 |
 | `temperature` | in °C, empty if the board does not report it |
-| `frequency` | of the first CPU, in MHz, empty if the board does not report it |
+| `frequency` | highest of the CPUs, in MHz, empty if the board does not report it |
+| `throttled` | Raspberry Pi firmware flags, in hexadecimal as `vcgencmd get_throttled` shows them, empty on other boards |
 
 ## :bookmark_tabs: Cite this work
 

@@ -15,7 +15,7 @@ jobs:
         run: make -C benchmark CFLAGS="-O2 -Wall -Wextra -Werror"
 
       - name: Run it for a few seconds
-        run: ./benchmark/cpupowerbench -w 2 -d 2 -c 1 -l 0.5,1 -o smoke.csv && cat smoke.csv
+        run: ./benchmark/cpupowerbench -p 0 -w 2 -d 2 -c 1 -l 0.5,1 -o smoke.csv && cat smoke.csv
 
       - name: Check the model script
         run: python3 -m py_compile model/generate_model.py

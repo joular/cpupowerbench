@@ -22,10 +22,4 @@ if ! command -v cc >/dev/null 2>&1 || ! command -v make >/dev/null 2>&1; then
 fi
 (cd "$DIR" && make)
 
-if [ "$1" != "-h" ]; then
-	# Lets the board cool down after compiling, and leaves time to start the power meter
-	echo "Starting in 60 s, start recording the power now"
-	sleep 60
-fi
-
 exec "$DIR/cpupowerbench" "$@"
