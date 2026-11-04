@@ -1,0 +1,5 @@
+# Python 3.12 or later, any newer version of these works
+numpy >= 1.26
+pandas >= 2.2
+scipy >= 1.11
+matplotlib >= 3.8
