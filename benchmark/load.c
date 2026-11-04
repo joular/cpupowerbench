@@ -26,6 +26,19 @@ Periods of 10 ms on average look like a steady load to the frequency governor, r
 #define MIN_PERIOD_NS 5000000L
 #define PERIOD_SPREAD_NS 10000000U
 
+/* The work mixes integer, memory and floating point operations, as normals programs do: reading the clock in a loop alone draws less power, and the model would read too low.
+No vector instructions, which draw more than most programs do. The clock is read every CHUNK steps, about a microsecond, so the work overruns by no more than that
+*/
+
+#define WORK_WORDS 8192
+#define CHUNK 256
+
+// 64 KB per thread, more than the L1 cache, and touched first by its own thread once pinned
+static _Thread_local uint64_t work_buffer[WORK_WORDS];
+
+// Keeps the compiler from dropping the work
+static volatile uint64_t sink;
+
 // The load and the stop flag are read under the lock, idle threads wait on the condition until either changes
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t changed = PTHREAD_COND_INITIALIZER;
@@ -54,10 +67,24 @@ static unsigned int next_random(unsigned int *state) {
     return *state;
 }
 
+// Each step depends on the one before, so it cannot be turned into vector code
+static void work(uint64_t *x, double *sum) {
+    for (int i = 0; i < CHUNK; i++) {
+        *x ^= *x << 13;
+        *x ^= *x >> 7;
+        *x ^= *x << 17;
+        uint64_t *slot = &work_buffer[*x & (WORK_WORDS - 1)];
+        *slot += *x;
+        *sum = *sum * 0.999999 + (double) (*slot & 0xffff);
+    }
+}
+
 static void *load_thread(void *seed) {
     unsigned int state = (unsigned int) (uintptr_t) seed;
     struct timespec period_end, busy_until, now;
     int permille;
+    uint64_t x = state;
+    double sum = 0;
 
     clock_gettime(CLOCK_MONOTONIC, &period_end);
     for (;;) {
@@ -80,8 +107,10 @@ static void *load_thread(void *seed) {
         clock_gettime(CLOCK_MONOTONIC, &busy_until);
         add_ns(&busy_until, period / 1000 * permille);
         do {
+            work(&x, &sum);
             clock_gettime(CLOCK_MONOTONIC, &now);
         } while (earlier(&now, &busy_until));
+        sink = x + (uint64_t) sum;
 
         // Sleeping until an absolute time keeps the share of work exact over many periods
         add_ns(&period_end, period);

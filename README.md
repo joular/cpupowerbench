@@ -58,7 +58,7 @@ For an accurate model:
 
 ### How the load works
 
-Each CPU gets its own thread, which works for a share of every short period and sleeps for the rest. At 20%, it works 2 ms out of every 10 ms, so the CPU stays at 20% for the whole step.
+Each CPU gets its own thread, which works for a share of every short period and sleeps for the rest. At 20%, it works 2 ms out of every 10 ms, so the CPU stays at 20% for the whole step. The work mixes integer, memory and floating point operations, like normal programs.
 The periods last between 5 and 15 ms, at random, so that the kernel's CPU accounting does not miss part of the work.
 
 After each step, the benchmark prints the CPU usage it measured, and the lowest and highest CPU, so you can check that every CPU carries the load.
